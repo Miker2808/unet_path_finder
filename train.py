@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from resunet import VGG_UNET
-from mr_dataset import MassachusettsRoadsDataset
+from dataset import MassachusettsRoadsDataset
 
 from utils import (
     load_checkpoint,
@@ -21,11 +21,11 @@ from utils import (
 # Hyperparameters etc.
 LEARNING_RATE = 1e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 16
-NUM_EPOCHS = 50
+BATCH_SIZE = 8
+NUM_EPOCHS = 10
 NUM_WORKERS = 4
-IMAGE_HEIGHT = 16*15
-IMAGE_WIDTH = 16*20
+IMAGE_HEIGHT = 16*25
+IMAGE_WIDTH = 16*25
 PIN_MEMORY = True
 
 TRAIN_VAL_SPLIT = 0.85
