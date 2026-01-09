@@ -31,46 +31,61 @@ class EarlyStopping:
             self.counter = 0
         return self.early_stop
     
-class CombinedLoss(nn.Module):
-    def __init__(self, alpha=0.7):
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0):
         super().__init__()
         self.alpha = alpha
-        self.bce = nn.BCEWithLogitsLoss()
-    
-    def dice_loss(self, pred, target):
-        smooth = 1e-5
-        pred = torch.sigmoid(pred)
-        intersection = (pred * target).sum(dim=(2, 3))
-        union = pred.sum(dim=(2, 3)) + target.sum(dim=(2, 3))
-        dice = (2. * intersection + smooth) / (union + smooth)
-        return 1 - dice.mean()
-    
-    def forward(self, pred, target):
-        bce = self.bce(pred, target)
-        dice = self.dice_loss(pred, target)
-        return self.alpha * bce + (1 - self.alpha) * dice
+        self.gamma = gamma
+        
+    def forward(self, inputs, targets):
+        BCE = nn.functional.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+        pt = torch.exp(-BCE)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * BCE
+        return focal_loss.mean()
 
+class CombinedLoss(nn.Module):
+    def __init__(self, alpha=0.5, beta=0.3, gamma=0.2):
+        super().__init__()
+        self.alpha = alpha  # Dice weight
+        self.beta = beta    # BCE weight
+        self.gamma = gamma  # Focal weight
+        self.focal = FocalLoss()
+        
+    def forward(self, inputs, targets):
+        # Dice Loss
+        inputs_sig = torch.sigmoid(inputs)
+        intersection = (inputs_sig * targets).sum()
+        dice = (2. * intersection + 1) / (inputs_sig.sum() + targets.sum() + 1)
+        dice_loss = 1 - dice
+        
+        bce = nn.functional.binary_cross_entropy_with_logits(inputs, targets)
+        
+        focal = self.focal(inputs, targets)
+        
+        return self.alpha * dice_loss + self.beta * bce + self.gamma * focal
 
-def get_val_loss(loader, model, loss_fn, device):
-    """Calculate validation loss"""
+def get_val_loss(loader, model, loss_fn, device="cuda"):
     model.eval()
     total_loss = 0
-    num_batches = 0
     
     with torch.no_grad():
-        for data, targets in loader:
-            data = data.to(device=device)
-            targets = targets.float().unsqueeze(1).to(device=device)
+        for x, y in loader:
+            x = x.to(device)
+            y = y.float().unsqueeze(1).to(device)
             
-            with autocast(device_type=device):
-                predictions = model(data)
-                loss = loss_fn(predictions, targets)
+            preds = model(x)
             
+            # Resize predictions to match target if needed
+            if preds.shape != y.shape:
+                preds = torch.nn.functional.interpolate(
+                    preds, size=y.shape[2:], mode='bilinear', align_corners=False
+                )
+            
+            loss = loss_fn(preds, y)
             total_loss += loss.item()
-            num_batches += 1
     
     model.train()
-    return total_loss / num_batches
+    return total_loss / len(loader)
 
 def save_checkpoint(state, filename="model_checkpoint.pth.tar"):
     print("=> Saving checkpoint")
@@ -93,8 +108,16 @@ def check_accuracy(loader, model, device="cuda"):
     with torch.no_grad():
         for x, y in loader:
             x = x.to(device)
-            y = y.to(device).unsqueeze(1)
+            y = y.to(device).unsqueeze(1)  # Add channel dimension to match model output
+            
             preds = torch.sigmoid(model(x))
+            
+            # Resize predictions to match target if needed
+            if preds.shape != y.shape:
+                preds = torch.nn.functional.interpolate(
+                    preds, size=y.shape[2:], mode='bilinear', align_corners=False
+                )
+            
             preds = (preds > 0.5).float()
             num_correct += (preds == y).sum()
             num_pixels += torch.numel(preds)
@@ -105,26 +128,29 @@ def check_accuracy(loader, model, device="cuda"):
     print(
         f"Got {num_correct}/{num_pixels} with acc {num_correct/num_pixels*100:.2f}"
     )
-    print(f"Dice score: {dice_score/len(loader)}")
+    print(f"Dice score: {dice_score/len(loader):.4f}")
     model.train()
 
-def save_predictions_as_imgs(
-    loader, model, folder="saved_images/", device="cuda"
-):
-    # Create folder if it doesn't exist
+def save_predictions_as_imgs(loader, model, folder="saved_images/", device="cuda"):
+    model.eval()
     os.makedirs(folder, exist_ok=True)
     
-    model.eval()
     for idx, (x, y) in enumerate(loader):
         x = x.to(device=device)
+        y = y.to(device=device).unsqueeze(1)
+        
         with torch.no_grad():
             preds = torch.sigmoid(model(x))
+            
+            # Resize predictions to match target if needed
+            if preds.shape != y.shape:
+                preds = torch.nn.functional.interpolate(
+                    preds, size=y.shape[2:], mode='bilinear', align_corners=False
+                )
+            
             preds = (preds > 0.5).float()
-        torchvision.utils.save_image(
-            preds, os.path.join(folder, f"pred_{idx}.png")
-        )
-        torchvision.utils.save_image(
-            y.unsqueeze(1), os.path.join(folder, f"mask_{idx}.png")
-        )
+        
+        torchvision.utils.save_image(preds, f"{folder}/pred_{idx}.png")
+        torchvision.utils.save_image(y, f"{folder}/mask_{idx}.png")
 
     model.train()

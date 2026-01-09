@@ -3,21 +3,7 @@ import torch.nn as nn
 import torchvision.transforms.functional as TF
 from torchvision import models
 from torchvision.models import VGG16_BN_Weights
-
-class DoubleConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(DoubleConv, self).__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 3, 1, 1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, 3, 1, 1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x):
-        return self.conv(x)
+from base_models import DoubleConv
 
 class VGG_UNET(nn.Module):
     def __init__(
@@ -55,6 +41,9 @@ class VGG_UNET(nn.Module):
         self.ups.append(DoubleConv(128, 64))  # 64(skip) + 64(up)
         
         self.final_conv = nn.Conv2d(64, out_channels, kernel_size=1)
+
+    def name(self):
+        return "vgg_unet"
 
     def forward(self, x):
         # Encoder with skip connections
