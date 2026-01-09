@@ -21,10 +21,11 @@ from utils import (
 # Hyperparameters etc.
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 8
-NUM_EPOCHS = 50
+BATCH_SIZE = 1
+NUM_EPOCHS = 10
 NUM_WORKERS = 12
-CROP_SIZE = (500, 500)
+IMAGE_HEIGHT = 16*93
+IMAGE_WIDTH = 16*93
 PIN_MEMORY = True
 LEARNING_RATE = 1e-4
 TRAIN_VAL_SPLIT = 0.85
@@ -32,13 +33,13 @@ EARLY_STOPPING_PATIENCE = 10
 MIN_DELTA = 0.001
 DICE_BCE_ALPHA = 0.6
 
-MODEL_PATH = "model/vgg_unet.pth.tar"
-LOAD_MODEL = False
+MODEL_PATH = "weights/"
+LOAD_MODEL = True
 SAVE_PREDICTIONS = True
 
 # Single dataset directories
-IMAGE_DIR = "dataset/images"
-MASK_DIR = "dataset/masks"
+IMAGE_DIR = "dataset/large/images"
+MASK_DIR = "dataset/large/masks"
 
 def train_fn(loader, model, optimizer, loss_fn, scaler):
     loop = tqdm(loader)
@@ -62,6 +63,7 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
 
 def main():
     train_transform = A.Compose([
+        A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
         A.Rotate(limit=180, p=0.5),
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
@@ -77,12 +79,13 @@ def main():
     ])
 
     val_transform = A.Compose([
+        A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2()
     ])
 
     # Create full dataset and split
-    full_dataset = MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=None, crop_size=CROP_SIZE)
+    full_dataset = MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=None)
     train_size = int(TRAIN_VAL_SPLIT * len(full_dataset))
     val_size = len(full_dataset) - train_size
     
@@ -93,11 +96,11 @@ def main():
     
     # Create datasets with transforms using split indices
     train_dataset = Subset(
-        MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=train_transform, crop_size=CROP_SIZE),
+        MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=train_transform),
         train_subset.indices
     )
     val_dataset = Subset(
-        MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=val_transform, crop_size=CROP_SIZE),
+        MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=val_transform),
         val_subset.indices
     )
 
@@ -110,7 +113,7 @@ def main():
         pin_memory=PIN_MEMORY, shuffle=False
     )
 
-    model = VGG_UNET(in_channels=3, out_channels=1).to(DEVICE)
+    model = RESNET_UNET_ATTEN(in_channels=3, out_channels=1).to(DEVICE)
     loss_fn = CombinedLoss(alpha=DICE_BCE_ALPHA)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-7)
@@ -118,7 +121,7 @@ def main():
     scaler = torch.amp.GradScaler('cuda')  # type: ignore
 
     if LOAD_MODEL:
-        load_checkpoint(torch.load(MODEL_PATH), model)
+        load_checkpoint(torch.load(MODEL_PATH + model.name + ".pth.tar"), model)
 
     print("Initial validation accuracy:")
     check_accuracy(val_loader, model, device=DEVICE)
@@ -137,24 +140,21 @@ def main():
             print(f"\nEarly stopping triggered at epoch {epoch+1}")
             model.load_state_dict(early_stopping.best_model_state)  # type: ignore
             break
-
-        if (epoch + 1) % 5 == 0:
-            checkpoint = {
+        
+        checkpoint = {
                 "state_dict": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "epoch": epoch,
                 "val_loss": val_loss,
             }
-            save_checkpoint(checkpoint, filename=MODEL_PATH)
-            if SAVE_PREDICTIONS:
-                save_predictions_as_imgs(val_loader, model, f"saved_images/epoch_{epoch+1}/", DEVICE)
+        save_checkpoint(checkpoint, filename=MODEL_PATH + model.name + ".pth.tar")
 
     # Final save
     print("\nFinal validation accuracy:")
     check_accuracy(val_loader, model, device=DEVICE)
-    save_checkpoint({"state_dict": model.state_dict()}, filename=MODEL_PATH)
+    save_checkpoint({"state_dict": model.state_dict()}, filename=MODEL_PATH + model.name + ".pth.tar")
     if SAVE_PREDICTIONS:
-        save_predictions_as_imgs(val_loader, model, "saved_images/final/", DEVICE)
+        save_predictions_as_imgs(val_loader, model, "saved_images/{model.name}/final/", DEVICE)
 
 
 if __name__ == "__main__":

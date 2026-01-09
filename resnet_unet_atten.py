@@ -10,7 +10,7 @@ class RESNET_UNET_ATTEN(nn.Module):
             self, in_channels=3, out_channels=1, pretrained=True
     ):
         super(RESNET_UNET_ATTEN, self).__init__()
-
+        self.name = "resnet_unet_atten"
         weights = ResNet50_Weights.DEFAULT if pretrained else None
         resnet = models.resnet50(weights=weights)
 
@@ -50,9 +50,6 @@ class RESNET_UNET_ATTEN(nn.Module):
         self.dec5 = DoubleConv(32, 32)
         
         self.final_conv = nn.Conv2d(32, out_channels, kernel_size=1)
-
-    def name(self):
-        return "res_unet_atten"
 
     def forward(self, x):
         # Store original size
