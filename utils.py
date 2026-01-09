@@ -31,38 +31,42 @@ class EarlyStopping:
             self.counter = 0
         return self.early_stop
     
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.25, gamma=2.0):
+class DiceLoss(nn.Module):
+    def __init__(self, smooth=1.0):
         super().__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        
+        self.smooth = smooth
+    
     def forward(self, inputs, targets):
-        BCE = nn.functional.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
-        pt = torch.exp(-BCE)
-        focal_loss = self.alpha * (1 - pt) ** self.gamma * BCE
-        return focal_loss.mean()
+        inputs = torch.sigmoid(inputs)
+        intersection = (inputs * targets).sum()
+        dice = (2.0 * intersection + self.smooth) / (inputs.sum() + targets.sum() + self.smooth)
+        return 1 - dice
+
+class JaccardLoss(nn.Module):
+    def __init__(self, smooth=1.0):
+        super().__init__()
+        self.smooth = smooth
+    
+    def forward(self, inputs, targets):
+        inputs = torch.sigmoid(inputs)
+        intersection = (inputs * targets).sum()
+        union = inputs.sum() + targets.sum() - intersection
+        jaccard = (intersection + self.smooth) / (union + self.smooth)
+        return 1 - jaccard
 
 class CombinedLoss(nn.Module):
-    def __init__(self, alpha=0.5, beta=0.3, gamma=0.2):
+    def __init__(self, alpha=0.5, beta=0.5):
         super().__init__()
-        self.alpha = alpha  # Dice weight
-        self.beta = beta    # BCE weight
-        self.gamma = gamma  # Focal weight
-        self.focal = FocalLoss()
+        self.alpha = alpha  # Jaccard weight
+        self.beta = beta    # Dice weight
+        self.jaccard = JaccardLoss()
+        self.dice = DiceLoss()
         
     def forward(self, inputs, targets):
-        # Dice Loss
-        inputs_sig = torch.sigmoid(inputs)
-        intersection = (inputs_sig * targets).sum()
-        dice = (2. * intersection + 1) / (inputs_sig.sum() + targets.sum() + 1)
-        dice_loss = 1 - dice
+        jaccard_loss = self.jaccard(inputs, targets)
+        dice_loss = self.dice(inputs, targets)
         
-        bce = nn.functional.binary_cross_entropy_with_logits(inputs, targets)
-        
-        focal = self.focal(inputs, targets)
-        
-        return self.alpha * dice_loss + self.beta * bce + self.gamma * focal
+        return self.alpha * jaccard_loss + self.beta * dice_loss
 
 def get_val_loss(loader, model, loss_fn, device="cuda"):
     model.eval()
