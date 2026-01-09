@@ -150,7 +150,7 @@ def save_predictions_as_imgs(loader, model, folder="saved_images/", device="cuda
             
             preds = (preds > 0.5).float()
         
-        torchvision.utils.save_image(preds, f"{folder}/pred_{idx}.png")
-        torchvision.utils.save_image(y, f"{folder}/mask_{idx}.png")
+        torchvision.utils.save_image(preds, f"{folder}/{model.name}/pred_{idx}.png")
+        torchvision.utils.save_image(y, f"{folder}/{model.name}/mask_{idx}.png")
 
     model.train()

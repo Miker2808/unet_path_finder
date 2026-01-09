@@ -32,7 +32,8 @@ EARLY_STOPPING_PATIENCE = 10
 MIN_DELTA = 0.001
 DICE_BCE_ALPHA = 0.6
 
-MODEL_PATH = "model/vgg_unet.pth.tar"
+MODEL_LOAD_PATH = "model_weights/vgg_unet.pth.tar"
+MODEL_SAVE_PATH = "model_weights/"
 LOAD_MODEL = False
 SAVE_PREDICTIONS = True
 
@@ -82,7 +83,7 @@ def main():
     ])
 
     # Create full dataset and split
-    full_dataset = MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=None, crop_size=CROP_SIZE)
+    full_dataset = MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=None)
     train_size = int(TRAIN_VAL_SPLIT * len(full_dataset))
     val_size = len(full_dataset) - train_size
     
@@ -93,11 +94,11 @@ def main():
     
     # Create datasets with transforms using split indices
     train_dataset = Subset(
-        MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=train_transform, crop_size=CROP_SIZE),
+        MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=train_transform),
         train_subset.indices
     )
     val_dataset = Subset(
-        MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=val_transform, crop_size=CROP_SIZE),
+        MassachusettsRoadsDataset(IMAGE_DIR, MASK_DIR, transform=val_transform),
         val_subset.indices
     )
 
@@ -118,7 +119,7 @@ def main():
     scaler = torch.amp.GradScaler('cuda')  # type: ignore
 
     if LOAD_MODEL:
-        load_checkpoint(torch.load(MODEL_PATH), model)
+        load_checkpoint(torch.load(MODEL_LOAD_PATH), model)
 
     print("Initial validation accuracy:")
     check_accuracy(val_loader, model, device=DEVICE)
@@ -145,14 +146,14 @@ def main():
                 "epoch": epoch,
                 "val_loss": val_loss,
             }
-            save_checkpoint(checkpoint, filename=MODEL_PATH)
+            save_checkpoint(checkpoint, filename=MODEL_SAVE_PATH + model.name + ".pth.tar")
             if SAVE_PREDICTIONS:
-                save_predictions_as_imgs(val_loader, model, f"saved_images/epoch_{epoch+1}/", DEVICE)
+                save_predictions_as_imgs(val_loader, model, f"saved_images/{model.name}/epoch_{epoch+1}/", DEVICE)
 
     # Final save
     print("\nFinal validation accuracy:")
     check_accuracy(val_loader, model, device=DEVICE)
-    save_checkpoint({"state_dict": model.state_dict()}, filename=MODEL_PATH)
+    save_checkpoint({"state_dict": model.state_dict()}, filename=MODEL_SAVE_PATH + model.name + ".pth.tar")
     if SAVE_PREDICTIONS:
         save_predictions_as_imgs(val_loader, model, "saved_images/final/", DEVICE)
 

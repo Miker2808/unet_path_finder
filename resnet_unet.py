@@ -10,7 +10,7 @@ class RESNET_UNET(nn.Module):
             self, in_channels=3, out_channels=1, pretrained=True
     ):
         super(RESNET_UNET, self).__init__()
-
+        self.name = "resnet_unet"
         weights = ResNet50_Weights.DEFAULT if pretrained else None
         resnet = models.resnet50(weights=weights)
 
@@ -46,9 +46,6 @@ class RESNET_UNET(nn.Module):
         self.dec5 = DoubleConv(32, 32)
         
         self.final_conv = nn.Conv2d(32, out_channels, kernel_size=1)
-
-    def name(self):
-        return "res_unet_atten"
 
     def forward(self, x):
         # Store original size
@@ -86,11 +83,9 @@ class RESNET_UNET(nn.Module):
         x = torch.cat([enc1, x], dim=1)
         x = self.dec4(x)
         
-        # Final upsample to original resolution
         x = self.up5(x)
         x = self.dec5(x)
         
-        # Ensure output matches input size
         x = TF.resize(x, size=original_size)
         
         return self.final_conv(x)

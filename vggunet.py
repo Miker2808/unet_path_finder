@@ -11,6 +11,8 @@ class VGG_UNET(nn.Module):
     ):
         super(VGG_UNET, self).__init__()
 
+        self.name = "vgg_unet"
+
         weights = VGG16_BN_Weights.DEFAULT if pretrained else None
         vgg = models.vgg16_bn(weights=weights)
 
@@ -41,9 +43,6 @@ class VGG_UNET(nn.Module):
         self.ups.append(DoubleConv(128, 64))  # 64(skip) + 64(up)
         
         self.final_conv = nn.Conv2d(64, out_channels, kernel_size=1)
-
-    def name(self):
-        return "vgg_unet"
 
     def forward(self, x):
         # Encoder with skip connections
