@@ -21,25 +21,27 @@ from utils import (
 # Hyperparameters etc.
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 1
+BATCH_SIZE = 8
 NUM_EPOCHS = 10
 NUM_WORKERS = 12
 IMAGE_HEIGHT = 16*93
 IMAGE_WIDTH = 16*93
 PIN_MEMORY = True
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-5
 TRAIN_VAL_SPLIT = 0.85
-EARLY_STOPPING_PATIENCE = 10
-MIN_DELTA = 0.001
-DICE_BCE_ALPHA = 0.6
+EARLY_STOPPING_PATIENCE = 15
+MIN_DELTA = 0.0001
+LOSS_ALPHA = 0.3 # Jaccard
+LOSS_BETA = 0.2 # Dice
+LOSS_GAMMA = 0.5 # Focal
 
 MODEL_PATH = "weights/"
 LOAD_MODEL = True
 SAVE_PREDICTIONS = True
 
 # Single dataset directories
-IMAGE_DIR = "dataset/large/images"
-MASK_DIR = "dataset/large/masks"
+IMAGE_DIR = "dataset/tiles/images"
+MASK_DIR = "dataset/tiles/masks"
 
 def train_fn(loader, model, optimizer, loss_fn, scaler):
     loop = tqdm(loader)
@@ -63,7 +65,7 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
 
 def main():
     train_transform = A.Compose([
-        A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
+        #A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
         A.Rotate(limit=180, p=0.5),
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
@@ -79,7 +81,7 @@ def main():
     ])
 
     val_transform = A.Compose([
-        A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
+        #A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2()
     ])
@@ -114,9 +116,10 @@ def main():
     )
 
     model = RESNET_UNET_ATTEN(in_channels=3, out_channels=1).to(DEVICE)
-    loss_fn = CombinedLoss(alpha=DICE_BCE_ALPHA)
+    loss_fn = CombinedLoss(alpha=LOSS_ALPHA, beta=LOSS_BETA, gamma=LOSS_GAMMA)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-7)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=5)
     early_stopping = EarlyStopping(patience=EARLY_STOPPING_PATIENCE, min_delta=MIN_DELTA)
     scaler = torch.amp.GradScaler('cuda')  # type: ignore
 
@@ -133,7 +136,7 @@ def main():
         val_loss = get_val_loss(val_loader, model, loss_fn, DEVICE)
         print(f"Validation Loss: {val_loss:.5f}")
         
-        scheduler.step(epoch + 1)
+        scheduler.step(val_loss)
         check_accuracy(val_loader, model, device=DEVICE)
         
         if early_stopping(val_loss, model):

@@ -38,6 +38,10 @@ class DiceLoss(nn.Module):
     
     def forward(self, inputs, targets):
         inputs = torch.sigmoid(inputs)
+        # Flatten to compute per-sample, then average
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+        
         intersection = (inputs * targets).sum()
         dice = (2.0 * intersection + self.smooth) / (inputs.sum() + targets.sum() + self.smooth)
         return 1 - dice
@@ -49,24 +53,44 @@ class JaccardLoss(nn.Module):
     
     def forward(self, inputs, targets):
         inputs = torch.sigmoid(inputs)
+        # Flatten to compute per-sample, then average
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+        
         intersection = (inputs * targets).sum()
         union = inputs.sum() + targets.sum() - intersection
         jaccard = (intersection + self.smooth) / (union + self.smooth)
         return 1 - jaccard
 
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1.0, gamma=2.0):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+    
+    def forward(self, inputs, targets):
+        # BCE with logits already handles normalization correctly
+        bce = torch.nn.functional.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+        pt = torch.exp(-bce)
+        focal = self.alpha * (1 - pt) ** self.gamma * bce
+        return focal.mean()
+
 class CombinedLoss(nn.Module):
-    def __init__(self, alpha=0.5, beta=0.5):
+    def __init__(self, alpha=0.3, beta=0.3, gamma=0.4):
         super().__init__()
         self.alpha = alpha  # Jaccard weight
         self.beta = beta    # Dice weight
+        self.gamma = gamma  # Focal weight
         self.jaccard = JaccardLoss()
         self.dice = DiceLoss()
+        self.focal = FocalLoss()
         
     def forward(self, inputs, targets):
         jaccard_loss = self.jaccard(inputs, targets)
         dice_loss = self.dice(inputs, targets)
+        focal_loss = self.focal(inputs, targets)
         
-        return self.alpha * jaccard_loss + self.beta * dice_loss
+        return self.alpha * jaccard_loss + self.beta * dice_loss + self.gamma * focal_loss
 
 def get_val_loss(loader, model, loss_fn, device="cuda"):
     model.eval()
@@ -107,32 +131,59 @@ def check_accuracy(loader, model, device="cuda"):
     num_correct = 0
     num_pixels = 0
     dice_score = 0
+    iou_score = 0
+    tp = 0  # True positives (correct roads)
+    fp = 0  # False positives (predicted road, not road)
+    fn = 0  # False negatives (missed roads)
     model.eval()
 
     with torch.no_grad():
         for x, y in loader:
             x = x.to(device)
-            y = y.to(device).unsqueeze(1)  # Add channel dimension to match model output
+            y = y.to(device).unsqueeze(1)
             
             preds = torch.sigmoid(model(x))
             
-            # Resize predictions to match target if needed
             if preds.shape != y.shape:
                 preds = torch.nn.functional.interpolate(
                     preds, size=y.shape[2:], mode='bilinear', align_corners=False
                 )
             
             preds = (preds > 0.5).float()
+            
+            # Standard pixel accuracy (misleading for this task)
             num_correct += (preds == y).sum()
             num_pixels += torch.numel(preds)
-            dice_score += (2 * (preds * y).sum()) / (
-                (preds + y).sum() + 1e-8
-            )
+            
+            # Dice score
+            intersection = (preds * y).sum()
+            dice_score += (2 * intersection) / ((preds.sum() + y.sum()) + 1e-8)
+            
+            # IoU/Jaccard score
+            union = preds.sum() + y.sum() - intersection
+            iou_score += intersection / (union + 1e-8)
+            
+            # Confusion matrix metrics
+            tp += (preds * y).sum()
+            fp += (preds * (1 - y)).sum()
+            fn += ((1 - preds) * y).sum()
 
-    print(
-        f"Got {num_correct}/{num_pixels} with acc {num_correct/num_pixels*100:.2f}"
-    )
-    print(f"Dice score: {dice_score/len(loader):.4f}")
+    accuracy = num_correct / num_pixels * 100
+    dice_avg = dice_score / len(loader)
+    iou_avg = iou_score / len(loader)
+    
+    # Precision & Recall
+    precision = tp / (tp + fp + 1e-8)
+    recall = tp / (tp + fn + 1e-8)
+    f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
+    
+    print(f"Pixel Accuracy: {accuracy:.2f}%")
+    print(f"Dice Score: {dice_avg:.4f}")
+    print(f"IoU Score: {iou_avg:.4f}")
+    print(f"Precision: {precision:.4f} (% of predicted roads that are correct)")
+    print(f"Recall: {recall:.4f} (% of actual roads that were detected)")
+    print(f"F1 Score: {f1:.4f}")
+    
     model.train()
 
 def save_predictions_as_imgs(loader, model, folder="saved_images/", device="cuda"):
